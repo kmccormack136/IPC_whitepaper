@@ -1,0 +1,688 @@
+### Introduction
+
+Microsoft defines Interprocess Communications (IPC) as the collective term for mechanisms facilitating communications and data sharing between applications. This paper will explore some core concepts related to IPC in kdb before investigating the role of IPC in a kdb tick application.
+
+### Core Concepts
+
+##### Set port
+
+A port is used by TCP as a communications endpoint. In other words, a point through which information flows to and from a process.
+
+A kdb process can be set to listen on a port in two ways. For this example, we will listen on port 1234;
+
+-   using \\p 1234 or system"p 1234" within the process
+
+-   using -p 1234 on the command line at process startup
+
+To stop listening on a port, set the server to listen on port 0:
+
+```q
+q)\p
+4567i
+q).z.i
+2493i
+q)\p 5678
+q)\p
+5678i
+q)system"p 6789"
+q)\p
+6789i
+q)\p 0
+```
+
+It is possible to see this listening port using lsof (list all open files) to view TCP connections for this PID. If the port number is changed, using lsof will show the process listening on the new port only.
+
+```q
+q).z.i
+97082i
+q)\p 4567
+q)\p 6789
+```
+
+```q
+katrina@ubuntu:~$ lsof -p 97082 -i tcp -a
+katrina@ubuntu:~$ lsof -p 97082 -i tcp -a
+COMMAND   PID    USER   FD   TYPE  DEVICE SIZE/OFF NODE NAME
+q       97082 katrina    4u  IPv4 2140799      0t0  TCP *:4567 (LISTEN)
+katrina@ubuntu:~$ lsof -p 97082 -i tcp -a
+COMMAND   PID    USER   FD   TYPE  DEVICE SIZE/OFF NODE NAME
+q       97082 katrina    4u  IPv4 2149383      0t0  TCP *:6789 (LISTEN)
+```
+
+Port numbers between 0 and 1024 are called system/well known ports and are used by the application layer of the Internet Protocol suite for the establishment of host-to-host connectivity. Root privileges are required to open these ports. Ports 1024 to 49151 are called user ports. Some of these may also be reserved, for example port 8080 is commonly used as a server port. More information can be found [here](https://en.wikipedia.org/wiki/List_of_TCP_and_UDP_port_numbers). Both system and user ports are used by transport protocols to indicate an application or service.
+
+##### Connecting to a process listening on a port
+
+When the client process executes the function 'hopen' with a server's details as its argument, it starts a connection and returns a positive integer used to identify the connection handle. This integer is assigned to a variable, h in the following examples demonstrating different connection protocols.
+
+###### TCP
+
+hopen can be used to open a TCP handle to another process by passing the process host and port as a parameter. User and password are optional parameters.
+
+```q
+q)h:hopen`:localhost:4567
+q)h"2+2"
+4
+```
+
+The hostname can be omitted when connecting to a process running on the same machine.
+
+```q
+q)i:hopen`::4567
+q)i"2+2"
+4
+```
+
+This can also be written with the target process port number only:
+
+```q
+q)j:hopen 4567
+q)j"2+2"
+4
+```
+
+It is also worth noting that for the purposes of this whitepaper we will be assigning open handles to variables but this is not required.
+
+```q
+q)hopen 4567
+4i
+q)4"1+1"
+2
+q)4"\\p"
+4567i
+```
+
+Using 'netstat' we can see the process listening on port 4567 and the established TCP connection between the client and server processes.
+
+```q
+katrina@katrina-VirtualBox:~$ netstat | grep 4567
+tcp        0      0 localhost:50254         localhost:4567          ESTABLISHED
+tcp        0      0 localhost:4567          localhost:50254         ESTABLISHED
+unix  3      [ ]         DGRAM                    14567    
+```
+
+It is also possible to open a 'one shot' connection to another process. This will only establish a connection for as long as it takes to execute the query.
+
+```q
+q)`::4567"2+2"
+4
+```
+
+It is possible for a kdb process to have too many open connections - the limit is 1022, after which you will see the error 'conn on the server process (all successfully opened connections remain open).
+
+```q
+q)\p 5678
+q)'conn
+```
+
+```q
+q)openCon:{hopen 5678}
+q)do[2000;openCon[]]
+'hop. OS reports: Connection reset by peer
+  [1]  openCon:{hopen 5678}
+                ^
+```
+
+hopen also accepts a timeout parameter - this will prevent the process hanging when attempting to connect to a process which is alive but unresponsive, for example, due to a long running query.
+
+```q
+q)// system"sleep 30" running on port 4567
+q)l:hopen(`::4567;1)
+'timeout
+  [0]  l:hopen(`::4567;1)
+         ^
+```
+
+Attempts to connect to a non-existent process will result in an error.
+
+```q
+q)l:hopen 5678
+'hop. OS reports: Connection refused
+  [0]  l:hopen 5678
+         ^
+```
+
+Opening a connection to the current port will execute any queries on handle 0 - this is the file descriptor for standard input.
+
+```q
+q)\p 4567
+q)h:hopen 4567
+q)h
+0i
+q)h"0N!`hi"
+`hi
+`hi
+```
+
+hopen can also be used to open a handle to file location. This will be discussed later in this paper with regards to writing to a log file within a kdb tickerplant set up.
+
+###### Unix domain socket
+
+A Unix Domain Socket (UDS) can be used for connections between processes running on the same host. A UDS allows bidirectional data exchange between processes running on the same machine. They are similar to internet sockets (TCP/IP socket) but, rather than using a network protocol, all communication occurs entirely within the operating system kernel. Using a UDS to communicate when processes are on the same machine will avoid some checks and operations in the TCP/IP protocol, making them faster and lighter. There is no windows equivalent.
+
+```q
+q)h:hopen`:unix://4567
+q)h
+4i
+```
+
+Use netstat to view this connection vs tcp
+
+```q
+// unix domain socket established
+katrina@katrina-VirtualBox:~$ netstat |grep 4567
+unix  3      [ ]         DGRAM                    14567    
+unix  3      [ ]         STREAM     CONNECTED     100811   @/tmp/kx.4567
+```
+
+###### TLS/SSL
+
+The TLS protocol is used to communicate across a network in a way designed to prevent eavesdropping and tampering. It is possible to initiate a TLS connection between kdb processes for secure communication. Note that a TLS connection requires certificates to be in place before initialising and it should currently only be considered for long standing, latency insensitive, low throughput connections given high overheads. Please see [this](https://code.kx.com/v2/kb/ssl/) cookbook for more detail on secure connections.
+	
+##### Negative Ports
+
+A q process can be started in multithreaded input mode by starting the process with a negative port number. A multithreaded process will use separate threads for every process that connects, which means that each client request can be executed on a separate CPU.
+
+Although slave processes are used to farm queries out to multiple processes, they still have a single threaded input queue. By using a negative port number, it is possible to multithread that queue too.
+
+```q
+katrina@ubuntu:~$ q -p -4567
+KDB+ 4.0 2020.03.17 Copyright (C) 1993-2020 Kx Systems
+l64/ 2(16)core 1959MB katrina ubuntu 127.0.1.1 EXPIRE 2021.05.05 kmccormack@kx.com KOD #4170677
+
+q)\p
+-4567i
+```
+
+Connections can be opened to this process in the same way as described previously for positive port numbers.
+
+Note that there are a number of restrictions in multithreaded mode:
+
+1.  queries are unable to update globals
+
+2.  .z.pc is not called on disconnect
+
+3.  .z.W has a view on main thread sockets only
+
+4.  cannot send async messages
+
+5.  cannot serve HTTP requests
+
+6.  views can be recalculated from the main thread only
+
+```q
+q)h:hopen 4567
+q)h"1+1"
+2
+q)h"a:2"
+'noupdate: `. `a
+  [0]  h"a:2"
+       ^
+```
+
+##### IPC Handlers
+
+The .z.namespace is the main namespace used in kdb IPC programming. When a client sends a query via IPC, the message is serialised, sent, then deserialised on the server side after passing through a number of .z IPC handlers. In this paper we will discuss the main handlers, but full documentation is available [here](https://code.kx.com/q/ref/dotz/).
+
+###### Validation
+
+Note that incoming IPC messages are validated to check that data structures are well formed. Senders of malformed messages will be disconnected, 'badMsg' will be reported and the raw message is captured in .z.bm.
+
+##### On-Connect Handlers
+
+When a process attempts to open a connection to a kdb process, two main handlers are invoked; .z.pw and .z.po.
+
+###### .z.pw
+
+If .z.pw is set, it is the first handler invoked on the server when a client attempts to connect. This happens immediately after '-u' checks if this option has been specified in the process command line. .z.pw is simply a function that can be used to perform custom validation so user and password info, as well as any other rules, can be validated as required by the application.
+
+By default .z.pw will return 1b. The parameters passed to the function are user name (symbol) and password (string). These are optional parameters in hopen. If the output of .z.pw is 1b, the login can go ahead (next stop .z.po). If it returns 0b, the login fails and the client gets an \'access error. More information regarding authentication in kdb can be found in the technical whitepaper [Permissions with kdb+](https://code.kx.com/v2/wp/permissions_with_kdb.pdf).
+
+```q
+q)// client process
+q)h:hopen`::4567:katrina:password
+```
+
+```q
+q)// server process
+q)\p 4567
+q).z.pw:{[u;p] 0N!(u;p);1b}
+q)(`katrina;"password")
+```
+
+If no username or password is passed to hopen, u and p are as below where the default username is the output of .z.u on the client process.
+
+```q
+q)// client process
+q).z.u
+`katrina
+q)hopen 4567
+4i
+```
+
+```q
+q)// server process
+q).z.pw:{[u;p] 0N!(u;p);1b}
+q)(`katrina;"")
+```
+
+###### .z.po
+
+.z.po (port open) is evaluated when a connection to a kdb process has been initialised and after it has been validated against .z.pw checks. Similar to .z.pw, .z.po will not be evaluated by default but only if it is assigned a user defined function. Its argument is the handle to the connecting client process. This is typically used to build a dictionary of handles (.z.w) with session information such as .z.a (IP address) and .z.u (user). It is also commonly used, together with .z.pc, to track open connections to the process.
+
+```q
+q).z.po:{0N!(x;.z.w;.z.a;.z.u)}
+q)(7i;7i;2130706433i;`katrina)
+```
+
+##### Synchronous vs Asynchronous communication
+
+Once we have established a connection, the next step is to query data available on the server process. This query can be either synchronous or asynchronous.
+
+###### Synchronous Queries
+
+If the client queries the server synchronously, the client will be unavailable until the server responds with the result of the query or an error. The handle, the positive integer assigned to the variable h in this example, is used to send the query.
+
+When a query is sent synchronously any messages queued on this handle are sent and no incoming messages will be processed on any handle until a response to this sync query is received.
+
+```q
+q)h:hopen 4567
+q)h"2+2"
+4
+```
+
+The basic method used to execute a query via IPC is sending the query as a string as in the above example. A function can also be executed on the server by passing a list to the handle where the function is the first item of the list, followed by the parameters.
+
+To execute a function defined on the client side, simply pass the function name so it will be resolved before sending. To execute a function defined on the server, pass the function name as a symbol.
+
+```q
+q)add:{x+2*y}
+q)h:hopen 4567
+q)h"add"
+{x+y}
+q)
+q)h(add;2;3)
+8
+q)h(`add;2;3)
+5
+```
+
+If a synchronous query is interrupted, for example if the server process is killed, the client process will receive an error. In the example below the process running on port 5678 was killed before the query completed successfully. The variable h will still be assigned to the handle number but any further attempts to communicate across this handle will fail.
+
+```q
+q)h:hopen 5678
+q)
+q)h"system\"sleep 10\""
+'os
+  [0]  h"system\"sleep 10\""
+       ^
+q)h
+4i
+q)h"1+1"
+'Cannot write to handle 4. OS reports: Bad file descriptor
+  [0]  h"1+1"
+       ^
+```
+
+The stale handle will be recycled if a new connection is made, '4' and therefore 'h' could now point to a completely different process.
+
+It is possible to interrupt a long running sync query using 'kill -s INT \*PID\*'. Similar to the previous example, any future attempts to communicate across this handle will fail.
+
+```q
+q)h"system\"sleep 30\""
+'rcv handle: 4. OS reports: Interrupted system call
+  [0]  h"system\"sleep 30\""
+       ^
+q)
+q)h"a"
+'Cannot write to handle 4. OS reports: Bad file descriptor
+  [0]  h"a"
+       ^
+```
+
+###### Asynchronous Queries
+
+A query can be sent asynchronously using a negative handle. An async query will not return a result and the client process does not wait. Async messages can be serialised and queued for sending, but the messages will not necessarily be dispatched immediately. Since the process is not waiting for a response, async querying is critical in situations where waiting for an unresponsive subscriber is unacceptable i.e. in a tickerplant.
+
+```q
+q)h:hopen 4567
+q)neg[h]"a:2+2"
+q)
+q)h"a"
+```
+
+_Flushing_
+
+Outgoing aysnc messages are sent periodically on each iteration of the underlying process timer. This can cause messages to be queued such that it is necessary to flush all messages through a handle. This can be achieved in 3 ways:
+
+-   executing 'neg\[handle\]\[\]'
+
+-   sending a synchronous message on the same handle
+
+-   sending a deferred sync message using -30! - the server process will execute the query but will not return the result to the client immediately if it is dealing with high query volumes. More information available from the blog [Kdb+/q Insights: Deferred Response](https://kx.com/blog/kdb-q-insights-deferred-response/)
+
+_Deferred Async/Async Callback_
+
+Deferred async is when a message is sent asynchronously to the server using the negative handle and executes a function which includes an instruction to return the result though the handle to the client process (.z.w), again asynchronously.
+
+```q
+q)h:hopen 4567
+q)h"add"
+{x+y+z}
+q)h"proc"
+{r:add . x;0N!r;neg[.z.w]({0N!x};r)}
+q)
+q)neg[h](`proc;1 2 3)
+q)6
+```
+
+_Asynchronous callback_
+
+In a kdb application there is generally a gateway process that will manage queries from multiple clients. In this situation it is not practical or useful to query data synchronously. Instead, it will use async callbacks. The initial async query from the client invokes a function on the server which will use .z.w (handle of the client) to return the result asynchronously to the client process.
+
+```q
+q)// server process on port 4567
+q)trade:([]sym:10?`a`b`c;price:10?3.54)
+q)getLastPxBySym:{res:select last price by sym from trade;neg[.z.w](res)}
+```
+
+```q
+q)// server process on port 4567
+q)// client process
+q)h:hopen 4567
+q)neg[h](`getLastPxBySym;`);t:h[]
+q)t
+sym| price   
+---| --------
+a  | 2.517548
+b  | 1.457053
+c  | 1.892872
+```
+
+_Broadcast_
+
+Much of the overhead of sending a message via IPC is in serialising the data before sending. It is possible to 'async broadcast' the same message to multiple handles using the internal -25! function. This will serialise the message once and send to all handles to reduce CPU and memory load.
+
+```q
+q)htp1:hopen 4567
+q)htp2:hopen 5678
+q)htp3:hopen 6789              
+q)tplist:(htp1;htp2;htp3)
+q)tplist
+4 5 6i
+q)-25!(tplist;"a:3")
+```
+
+This can be applied to a tickerplant publishing asynchronously to multiple subscribers (rdbs, chained tickerplants or other processes performing realtime calculations).
+
+###### .z.pg / .z.ps
+
+When the query reaches the server, it invokes a different message handler depending on whether the query was sent synchronously (.z.pg - get) or asynchronously (.z.ps - set). The return value from .z.pg is sent as the response message and the return value from .z.ps is ignored unless it is an error. If it is an error, the message is printed to the console of the process the query is being executed on. The error will not be visible to the querying process (the client).
+
+By default .z.pg and .z.ps are equivalent to {value x} but are commonly edited to implement user level permissioning. The default behaviour of these, or any .z.p\* handlers defined in k before .q.k is loaded can be restored using '\\x'.
+
+More detail on using this information to implement user level permissioning can be found in the [Permissions with kdb+](https://code.kx.com/q/wp/permissions_with_kdb.pdf) whitepaper.
+
+Note that outside of the common applications discussed above, any parameter can be sent across a handle and .z.pg or .z.ps can be defined to evaluate it.
+
+```q
+q)// server process
+q)\p 4567
+q).z.pg:{99h=type x}
+```
+
+```q
+q)// client process
+q)h:hopen 4567
+q)h"1+1"
+0b
+q)h`a`b`c!`d`e`f
+1b
+```
+
+##### Closing a connection
+
+Now that the client has connected to the server and run the query, the last step is to close the handle.
+
+To close the handle inside a process, use hclose.
+
+```q
+q)h:hopen 4567
+q)h
+4i
+q)h"2+2"
+4
+q)hclose h
+q)h"2+2"
+'Cannot write to handle 4. OS reports: Bad file descriptor
+  [0]  h"2+2"
+       ^
+```
+
+This can also be used to close a handle from the server side
+
+```q
+q)// server process
+q)// use .z.po to store a list of opened handles
+q)l:()
+q).z.po:{`l set l,.z.w}
+q)l
+q)
+q)// connection opened from client
+q)l
+,6i
+q)hclose 6
+```
+
+##### .z.pc
+
+Running hclose\[handle\] on the client will cause .z.pc to be invoked on the server. Unlike the message handlers we have seen before, it is not possible to obtain information relating to the client process in .z.pc because at this point that connection no longer exists. The integer identifying the handle that was just closed is sent as a parameter to .z.pc and can be used together with .z.po, to track connections to the server process.
+
+In addition to when a handle is closed gracefully using hclose, .z.pc is also invoked on the server if the client process is killed.
+
+```q
+q).z.po:{0N!"connection opened, handle: ",string[.z.w]}
+q).z.pc:{0N!("handle closed";x;.z.w)}
+q)
+q)"connection opened, handle: 6"
+("handle closed";6i;0i)
+```
+
+###### Tracking open connections
+
+As mentioned above, it is common for a server process to use the .z.po and .z.pc message handlers to track all connections from client processes. In the below example, we create a table in memory on the server side, keyed on handle. When a new connection is opened a new row is added to the table and when the connection is closed the row can be deleted or preferably updated to reflect the new status.
+
+```q
+q)// on the server side
+q)\p 4567
+q)trackConnections:([handle:()]ip:();user:();status:())
+q).z.po:{`trackConnections upsert (.z.w;.z.a;.z.u;`OPEN)}
+q).z.pc:{`trackConnections set update status:`CLOSED from trackConnections where handle=x}
+```
+
+```q
+q)// on the client side
+q)h:hopen 4567
+q)h"trackConnections"
+handle| ip         user    status
+------| -------------------------
+892   | 2130706433 katrina OPEN
+q)hclose h
+q)
+q)h:hopen 4567
+q)h"trackConnections"
+handle| ip         user    status
+------| -------------------------
+892   | 2130706433 katrina CLOSED
+736   | 2130706433 katrina OPEN
+```
+
+### Application of IPC in a kdb tick system
+
+See diagram of a tick application - similar architecture can be found described in more detail on [code.kx.com](https://code.kx.com/q/tutorials/startingq/tick/) and in the whitepaper on the topic [here](https://code.kx.com/q/wp/rt-tick/).
+
+![](images/tickDiagram.png)
+
+The core elements of this kdb tick setup are
+
+-   A tickerplant
+
+-   A realtime database (RDB)
+
+-   A historical database (HDB)
+
+-   A source of data (feed)
+
+In the following discussion I will be using the kdb tick code available from the KX Systems [github](https://github.com/KxSystems/kdb-tick/) to explore how IPC is used in a vanilla tick application.
+
+In the following section, any code taken from the kdb tick scripts will be flagged.
+
+##### Initialise tickerplant
+
+When a vanilla tickerplant is first started up a number of variables are assigned, the process port is set and the u.q utilities and the table schema scripts are loaded.
+
+```q
+(kdb-tick)
+system"l ",tickdir,"/u.q"
+```
+
+The tickerplant process is set to listen on port 5010 unless a port is specified on the command line at startup.
+
+```q
+(kdb-tick)
+if[not system"p";system"p 5010"]
+```
+
+All messages published to a tickerplant are immediately logged to a file. This file can be used to replay all messages up to the point of failure in the event of a process crashing. A handle (.u.l) is opened to the desired file (.u.L) using hopen. Messages sent to this handle are appended to the file.
+
+```q
+q).u.L:`:/home/katrina/samplelog
+q).u.l:hopen .u.L
+q)read0 .u.L
+q)neg[.u.l]"first log message";
+q)read0 .u.L
+"first log message"
+q)neg[.u.l]"second log message";
+q)read0 .u.L
+"first log message"
+"second log message"
+```
+
+##### Initialise rdb
+
+During rdb initialisation, the functions below are invoked to initialise table schemas and, if necessary, replay data from the tplog to catch up to the current state.
+
+```q
+(kdb-tick)
+/ connect to ticker plant for (schema;(logcount;log))
+.u.rep .(hopen `$tpport)"(.u.sub[`;`];`.u `i`L)";
+```
+
+The rdb process opens a handle to the tickerplant using hopen, runs a synchronous query to subscribe this rdb to all tables and all symbols available from the tickerplant, and return the table names and schemas to the rdb. The result is passed to .u.rep in order to initialise these table schemas in memory. We can split this sequence out as below:
+
+```q
+q)h:hopen `$tpport
+q)x:h"(.u.sub[`;`];`.u `i`L)"
+q).u.rep . x
+```
+
+##### Publish data to a tickerplant
+
+In a vanilla tickerplant .z.pg and .z.ps use the default {value x} and .u.upd is defined as below:
+
+```q
+(kdb-tick)
+\d .u
+upd:{[t;x]t insert x;if[l;l enlist (`upd;t;x);j+:1]};
+```
+
+Data is first inserted into a table in memory, then logged to the tplog on disk such that running {value x} on any line will invoke the 'upd' function with the table name and data as input parameters.
+
+Data is published synchronously from a feedhandler to the tickerplant. This is not recommended for time critical feeds with a large number of updates but can be used for feeds where you need confirmation that each message was received correctly.
+
+##### Managing tickerplant subscriptions
+
+In a tickerplant, current subscriptions are maintained in .u.w, an in memory dictionary which stores each subscriber's handle and subscription information. When a process subscribes to the tickerplant, the process handle and any symbol filters are added to .u.w.
+
+Below is an example of .u.w in a tickerplant with two tables - 'trade' and 'quote'. In this example the rdb is the only subscriber and it is subscribed to all symbols for both tables
+
+```q
+q).u.w
+quote| 7i `
+trade| 7i `
+```
+
+.z.pc is invoked when a handle to the process is closed. In the context of a tickerplant this means that a connection from a subscriber has closed and this subscription must be removed from .u.w.
+
+```q
+(kdb-tick)
+\d .u
+del:{w[x]_:w[x;;0]?y};
+.z.pc:{del[;x]each t}
+```
+
+The function '.u.del' accepts two input parameters: x, the handle to the now closed subscriber and .u.t, a global list of all tables defined in the tickerplant. This function will remove the handle from the subscription list for each of these tables. In this example, if the single rdb subscribing to the process is killed, .u.w will be empty.
+
+```q
+q).u.w
+quote|
+trade|
+```
+
+##### Publishing from the tickerplant to subscribers
+
+Data is published from the tickerplant by invoking .u.pub on the tickerplant periodically on a timer. .u.pub accepts two inputs, t - the table name and x - the data (value t).
+
+```q
+(kdb-tick)
+\d .u
+pub:{[t;x]{[t;x;w]if[count x:sel[x]w 1;(neg first w)(`upd;t;x)]}[t;x]each w t}
+```
+
+If on a timer tick (whatever \\t is set to, 1000ms by default) the count of the in memory table 'x' is greater than zero, these rows are published asynchronously to each handle subscribed to table t in .u.w.
+
+This publishing is considered the critical path of data in a low latency tick system. As such, it is considered best practice to use async messaging so that no unnecessary delays in streaming data are caused by the process waiting for a response from a hanging or unresponsive subscriber.
+
+##### End of day
+
+The timer has another important function within the tickerplant - the end of day rollover. The .z.ts timer function takes the system's date as a parameter and passes this to .u.ts. Below we can see the function definitions of endofday and ts within the .u namespace.
+
+```q
+(kdb-tick)
+endofday:{
+  end d;
+  d+:1;
+  if[l;hclose l;l::0(`.u.ld;d)]};
+
+ts:{if[d<x;if[d<x-1;system"t 0";'"more than one day?"];endofday[]]};
+```
+
+Once the midnight threshold passes, '.u.endofday' will run, which in turn runs .u.end. On the tickerplant, .u.end closes the open connection to the tplog using hclose and initialises a tplog for the new date.
+
+```q
+(kdb-tick)
+\d .u
+end:{(neg union/[w[;;0]])@\:(`.u.end;x)}
+```
+
+When .u.end is triggered by the at end of day it will asynchronously run the local .u.end function on each of the subscribers with today's date as it's parameter. In a vanilla tickerplant this will trigger the end of day save down on the rdb. Again, this is an async query because an unresponsive subscriber should not affect the performance of a tickerplant.
+
+This was a short review of how IPC is implemented in the course of processing and storing data in a realtime tick system, additional discussion around how this data is accessed can be found in the whitepaper [Common design principles for kdb+ gateways](https://code.kx.com/q/wp/gateway-design/).
+
+### Conclusion
+
+This paper has provided an in depth look at the underlying mechanisms of interprocess communication in kdb+. It begins by proving an overview of TCP connections and discusses applications for using unix domain sockets across processes on a local host and TLS/SSL for more secure communication. It goes on to describe each of the message handlers invoked in the process of opening a connection to a process, running a query and closing that connection and uses various examples to illustrate these. The second part of the paper then takes a closer look of how IPC is applied in a vanilla tickerplant application, from when the data is first received from an upstream feed process to how tables are saved down at the end of the day.
+
+### Appendix
+
+##### TCP/IP
+
+The Internet Protocol Suite, commonly known as TCP/IP, is a conceptual model and set of communications protocols which specifies how data is exchanged. It provides end-to-end communications that identify how the data should be broken into packets, addressed, transmitted, routed and received at the destination with little central management.
+
+##### TCP/IP sockets
+
+The term socket usually refers to a TCP socket. A socket is one end point of a two-way communication link. These network sockets allow communication between two different processes on the same or on different machines. These sockets are assumed to be associated with a specific socket address - the combination of an IP address and port number. The local process can communicate with another (foreign) process by sending data to or receiving data from the foreign socket address which will have its own associated socket.
+
+![](images/TCPDiagram.png)
+
+A process can refer to a socket using a file descriptor or handle, an abstract indicator used to access a file or other resource.
