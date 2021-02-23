@@ -589,17 +589,17 @@ if[not system"p";system"p 5010"]
 All messages published to a tickerplant are immediately logged to a file. This file can be used to replay all messages up to the point of failure in the event of a process crashing. A handle (`.u.l`) is opened to the desired file (`.u.L`) using `hopen`. Messages sent to this handle are appended to the file.
 
 ```q
-q).u.L:`:/home/katrina/samplelog
-q).u.L set ();
+q).u.L:`:sampleLog
+q).u.L set ()
+`:sampleLog
 q).u.l:hopen .u.L
-q)read0 .u.L
-q)neg[.u.l]"first log message";
-q)read0 .u.L
-"first log message"
-q)neg[.u.l]"second log message";
-q)read0 .u.L
-"first log message"
-"second log message"
+q).u.l enlist (`upd;`tab;([]"first record"));
+q)get .u.L
+`upd `tab +(,`x)!,"first record"
+q).u.l enlist (`upd;`tab;([]"second record"))
+q)get .u.L
+`upd `tab +(,`x)!,"first record"
+`upd `tab +(,`x)!,"second record"
 ```
 
 ### Initialise rdb
