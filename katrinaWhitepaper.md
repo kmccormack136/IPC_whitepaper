@@ -254,7 +254,7 @@ q)h"a:2"
 
 More information can be found [here.](https://code.kx.com/q/kb/multithreaded-input/)
 
-### IPC Handlers
+### IPC Handlers // Is this section meant to be for everything up to description of tick.q? Only Validation in it currently doesnt look right - EC
 
 The .z.namespace is the main namespace used in kdb IPC programming. When a client sends a query via IPC, the message is serialised, sent, then deserialised on the server side after passing through a number of .z IPC handlers. In this paper we will discuss the main handlers, but full documentation is available [here](https://code.kx.com/q/ref/dotz/).
 
@@ -393,9 +393,11 @@ Outgoing aysnc messages are sent periodically on each iteration of the underlyin
 * sending a synchronous message on the same handle
 * sending a deferred sync message using `-30!` - the server process will execute the query but will not return the result to the client immediately if it is dealing with high query volumes. More information available from the blog [Kdb+/q Insights: Deferred Response](https://kx.com/blog/kdb-q-insights-deferred-response/)
 
-##### Deferred Async/Async Callback
+// defered response -30! should probably have its own section and example. I dont think it really falls under flushing, thats being used in a different sense in linked blog. And flushing section should probably reference https://code.kx.com/q/basics/ipc/#block-queue-flush  - EC
 
-Deferred async is when a message is sent asynchronously to the server using the negative handle and executes a function which includes an instruction to return the result though the handle to the client process (`.z.w`), again asynchronously.
+##### Deferred synchronous // from https://code.kx.com/q/kb/load-balancing/
+
+Deferred sync is when a message is sent asynchronously to the server using the negative handle and executes a function which includes an instruction to return the result though the handle to the client process (`.z.w`), again asynchronously. After The client sends its async request it blocks on the handle waiting for a result to be returned
 
 ```q
 q)h:hopen 4567
@@ -404,7 +406,8 @@ q)h"add"
 q)h"proc"
 {r:add . x;0N!r;neg[.z.w]({0N!x};r)}
 q)
-q)neg[h](`proc;1 2 3)
+q)neg[h](`proc;1 2 3);res:h[];
+q)res
 q)6
 ```
 
@@ -435,7 +438,7 @@ c  | 43.7764
 
 More information on this can be found [here](https://code.kx.com/q/kb/callbacks/).
 
-##### Broadcast
+##### Broadcast // what happens it if fails to publish to one of the handles do all fail? Does it matter when handle was in list - EC
 
 Much of the overhead of sending a message via IPC is in serialising the data before sending. It is possible to 'async broadcast' the same message to multiple handles using the internal `-25!` function. This will serialise the message once and send to all handles to reduce CPU and memory load.
 
@@ -451,7 +454,7 @@ q)-25!(tplist;"a:3")
 
 This can be applied to a tickerplant publishing asynchronously to multiple subscribers (rdbs, chained tickerplants or other processes performing realtime calculations). More examples can be found [here](https://code.kx.com/q/basics/internal/#-25x-async-broadcast).
 
-#### .z.pg / .z.ps
+#### .z.pg (get) / .z.ps (set)
 
 When the query reaches the server, it invokes a different message handler depending on whether the query was sent synchronously (`.z.pg` - get) or asynchronously (`.z.ps` - set). The return value from `.z.pg` is sent as the response message and the return value from `.z.ps` is ignored unless it is an error. If it is an error, the message is printed to the console of the process the query is being executed on. The error will not be visible to the querying process (the client).
 
@@ -510,7 +513,7 @@ q)l
 q)hclose 6
 ```
 
-### .z.pc
+### .z.pc (close)
 
 Running `hclose[handle]` on the client will cause `.z.pc` to be invoked on the server. Unlike the message handlers we have seen before, it is not possible to obtain information relating to the client process in `.z.pc` because at this point that connection no longer exists. The integer identifying the handle that was just closed is sent as a parameter to `.z.pc` and can be used together with `.z.po`, to track connections to the server process.
 
@@ -720,3 +723,10 @@ The term socket usually refers to a TCP socket. A socket is one end point of a t
 ![TCPDiagram](images/TCPDiagram.png)
 
 A process can refer to a socket using a file descriptor or handle, an abstract indicator used to access a file or other resource.
+
+
+## FEEDBACK - Eoin 
+Ideas that could maybe be explored explained but possibly out of scope:
+- Describe socket buffers especially what happens when we have a slow subscriber, where messages build up and how kdb process when thread is free again.  
+- Explain edge case where scenario making a sync call kdb will processes any msgs pending on that handle before it gets sync response. 
+- should .z.W be covered
