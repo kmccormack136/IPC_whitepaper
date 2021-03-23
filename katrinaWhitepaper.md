@@ -580,7 +580,7 @@ handle| ip         user    status
 
 See diagram of a tick application - similar architecture can be found described in more detail on [code.kx.com](https://code.kx.com/q/tutorials/startingq/tick/) and in the whitepaper on the topic [here](https://code.kx.com/q/wp/rt-tick/).
 
-![tickDiagram](images/tickDiagram.png)
+![tickDiagram](images/tickDiagram.PNG)
 
 The core elements of this kdb tick setup are
 
