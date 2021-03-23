@@ -7,15 +7,15 @@
       * [TLS/SSL](#tlsssl)
     * [Negative Ports](#negative-ports)
     * [IPC Handlers](#ipc-handlers)
-      * [Validation](#validation)
     * [On-Connect Handlers](#on-connect-handlers)
       * [.z.pw](#zpw)
       * [.z.po](#zpo)
     * [Synchronous vs Asynchronous communication](#synchronous-vs-asynchronous-communication)
       * [Synchronous Queries](#synchronous-queries)
+        * [Deferred Response](#deferred-response)
       * [Asynchronous Queries](#asynchronous-queries)
         * [Flushing](#flushing)
-        * [Deferred Async/Async Callback](#deferred-asyncasync-callback)
+        * [Deferred synchronous](#deferred-synchronous)
         * [Asynchronous callback](#asynchronous-callback)
         * [Broadcast](#broadcast)
       * [.z.pg / .z.ps](#zpg--zps)
@@ -33,6 +33,7 @@
 * [Appendix](#appendix)
     * [TCP/IP](#tcpip)
     * [TCP/IP sockets](#tcpip-sockets)
+	* [Summary of major IPC related releases](#summary-of-major-ipc-related-releases)
 
 ## Introduction
 
@@ -191,7 +192,8 @@ q)h"0N!`hi"
 `hi
 ```
 
-`hopen` can also be used to open a handle to file location. This will be discussed later in this paper with regards to writing to a log file within a kdb tickerplant set up.
+`hopen` can also be used to open a handle to file location. This will be discussed later in this paper with regards to writing to a log file within a kdb tickerplant set up. 
+More information on `hopen` is available [here](https://code.kx.com/q/ref/hopen/).
 
 #### Unix domain socket
 
@@ -236,8 +238,8 @@ Connections can be opened to this process in the same way as described previousl
 Note that there are a number of restrictions in multithreaded mode:
 
 1. queries are unable to update globals
-2. `.z.pc` is not called on disconnect
-3. `.z.W` has a view on main thread sockets only
+2. `.z.pc` is not called on disconnect
+3. `.z.W` has a view on main thread sockets only
 4. cannot send async messages
 5. cannot serve HTTP requests
 6. views can be recalculated from the main thread only
@@ -254,13 +256,9 @@ q)h"a:2"
 
 More information can be found [here.](https://code.kx.com/q/kb/multithreaded-input/)
 
-### IPC Handlers // Is this section meant to be for everything up to description of tick.q? Only Validation in it currently doesnt look right - EC
+### IPC Handlers
 
-The .z.namespace is the main namespace used in kdb IPC programming. When a client sends a query via IPC, the message is serialised, sent, then deserialised on the server side after passing through a number of .z IPC handlers. In this paper we will discuss the main handlers, but full documentation is available [here](https://code.kx.com/q/ref/dotz/).
-
-#### Validation
-
-Note that incoming IPC messages are validated to check that data structures are well formed. Senders of malformed messages will be disconnected, 'badMsg' will be reported and the raw message is captured in [`.z.bm`](https://code.kx.com/q/ref/dotz/#zbm-msg-validator).
+The .z.namespace is the main namespace used in kdb IPC programming. When a client sends a query via IPC, the message is [serialised](https://code.kx.com/q/kb/serialization/), sent, then deserialised on the server side after passing through a number of .z IPC handlers. In this paper we will discuss the main handlers, but full documentation is available [here](https://code.kx.com/q/ref/dotz/).
 
 ### On-Connect Handlers
 
@@ -268,9 +266,9 @@ When a process attempts to open a connection to a kdb process, two main handlers
 
 #### .z.pw
 
-If `.z.pw` is set, it is the first handler invoked on the server when a client attempts to connect. This happens immediately after '-u' checks if this option has been specified in the process command line. `.z.pw` is simply a function that can be used to perform custom validation so user and password info, as well as any other rules, can be validated as required by the application.
+If [`.z.pw`](https://code.kx.com/q/ref/dotz/#zpw-validate-user) is set, it is the first handler invoked on the server when a client attempts to connect. This happens immediately after ['-u' checks](https://code.kx.com/q/basics/cmdline/#-u-usr-pwd) if this option has been specified in the process command line. `.z.pw` is simply a function that can be used to perform custom validation so user and password info, as well as any other rules, can be validated as required by the application.
 
-By default `.z.pw` will return 1b. The parameters passed to the function are user name (symbol) and password (string). These are optional parameters in `hopen`. If the output of `.z.pw` is 1b, the login can go ahead (next stop `.z.po`). If it returns 0b, the login fails and the client gets an \'access error. More information regarding authentication in kdb can be found in the technical whitepaper [Permissions with kdb+](https://code.kx.com/v2/wp/permissions_with_kdb.pdf).
+By default `.z.pw` will return 1b. The parameters passed to the function are user name (symbol) and password (string). These are optional parameters in `hopen`. If the output of `.z.pw` is 1b, the login can go ahead (next stop `.z.po`). If it returns 0b, the login fails and the client gets an \'access error. More information regarding authentication in kdb can be found in the technical whitepaper [Permissions with kdb+](https://code.kx.com/v2/wp/permissions_with_kdb.pdf). 
 
 ```q
 q)// client process
@@ -302,16 +300,17 @@ q)(`katrina;"")
 
 #### .z.po
 
-`.z.po` (port open) is evaluated when a connection to a kdb process has been initialised and after it has been validated against `.z.pw` checks. Similar to `.z.pw`, `.z.po` will not be evaluated by default but only if it is assigned a user defined function. Its argument is the handle to the connecting client process. This is typically used to build a dictionary of handles (`.z.w`) with session information such as `.z.a` (IP address) and `.z.u` (user). It is also commonly used, together with `.z.pc`, to track open connections to the process.
+[`.z.po`](https://code.kx.com/q/ref/dotz/#zpo-open) (port open) is evaluated when a connection to a kdb process has been initialised and after it has been validated against `.z.pw` checks. Similar to `.z.pw`, `.z.po` will not be evaluated by default but only if it is assigned a user defined function. Its argument is the handle to the connecting client process. This is typically used to build a dictionary of handles (`.z.w`) with session information such as [`.z.a`](https://code.kx.com/q/ref/dotz/#za-ip-address) (IP address) and [`.z.u`](https://code.kx.com/q/ref/dotz/#zu-user-id) (user). It is also commonly used, together with `.z.pc`, to track open connections to the process.
 
 ```q
 q).z.po:{0N!(x;.z.w;.z.a;.z.u)}
 q)(7i;7i;2130706433i;`katrina)
 ```
 
+
 ### Synchronous vs Asynchronous communication
 
-Once we have established a connection, the next step is to query data available on the server process. This query can be either synchronous or asynchronous.
+Once we have established a connection, the next step is to query data available on the server process. This query can be either synchronous or asynchronous. Further information available [here](https://code.kx.com/q/learn/startingkdb/ipc/#synchronousasynchronous).
 
 #### Synchronous Queries
 
@@ -374,6 +373,10 @@ q)h"a"
        ^
 ```
 
+##### Deferred Response 
+[Deferred reponse](https://code.kx.com/q/kb/deferred-response/) using -30! allows a server to defer the response to a synchronous query, allowing other messages to be processed before responding. This is useful where synchronous messaging is necessary on the client side. 
+An example implementation of deferred sync message handling is discussed in the blog [Kdb+/q Insights: Deferred Response](https://kx.com/blog/kdb-q-insights-deferred-response/).
+
 #### Asynchronous Queries
 
 A query can be sent asynchronously using a negative handle. An async query will not return a result and the client process does not wait. Async messages can be serialised and queued for sending, but the messages will not necessarily be dispatched immediately. Since the process is not waiting for a response, async querying is critical in situations where waiting for an unresponsive subscriber is unacceptable i.e. in a tickerplant.
@@ -387,17 +390,16 @@ q)h"a"
 
 ##### Flushing
 
-Outgoing aysnc messages are sent periodically on each iteration of the underlying process timer. This can cause messages to be queued such that it is necessary to flush all messages through a handle. This can be achieved in 3 ways:
+Outgoing aysnc messages are sent periodically on each iteration of the underlying process timer. This can cause messages to be queued such that it is necessary to flush all messages through a handle. This can be achieved as below:
 
-* executing `neg[handle][]`
-* sending a synchronous message on the same handle
-* sending a deferred sync message using `-30!` - the server process will execute the query but will not return the result to the client immediately if it is dealing with high query volumes. More information available from the blog [Kdb+/q Insights: Deferred Response](https://kx.com/blog/kdb-q-insights-deferred-response/)
+* executing `neg[handle][]` or `neg[handle](::)`
+* sending a synchronous message on the same handle, this will provide confirmation of execution as all messages are processed in the order they are sent
 
-// defered response -30! should probably have its own section and example. I dont think it really falls under flushing, thats being used in a different sense in linked blog. And flushing section should probably reference https://code.kx.com/q/basics/ipc/#block-queue-flush  - EC
+More information is available [here](https://code.kx.com/q/basics/ipc/#block-queue-flush).
 
-##### Deferred synchronous // from https://code.kx.com/q/kb/load-balancing/
+##### Deferred synchronous
 
-Deferred sync is when a message is sent asynchronously to the server using the negative handle and executes a function which includes an instruction to return the result though the handle to the client process (`.z.w`), again asynchronously. After The client sends its async request it blocks on the handle waiting for a result to be returned
+[Deferred sync](https://code.kx.com/q/kb/load-balancing/) is when a message is sent asynchronously to the server using the negative handle and executes a function which includes an instruction to return the result though the handle to the client process (`.z.w`), again asynchronously. After The client sends its async request it blocks on the handle waiting for a result to be returned
 
 ```q
 q)h:hopen 4567
@@ -438,9 +440,9 @@ c  | 43.7764
 
 More information on this can be found [here](https://code.kx.com/q/kb/callbacks/).
 
-##### Broadcast // what happens it if fails to publish to one of the handles do all fail? Does it matter when handle was in list - EC
+##### Broadcast 
 
-Much of the overhead of sending a message via IPC is in serialising the data before sending. It is possible to 'async broadcast' the same message to multiple handles using the internal `-25!` function. This will serialise the message once and send to all handles to reduce CPU and memory load.
+Much of the overhead of sending a message via IPC is in serialising the data before sending. It is possible to 'async broadcast' the same message to multiple handles using the internal `-25!` function. This will serialise the message once and send to all handles to reduce CPU and memory load. An error in publishing to any handle will result in the message not being sent to any of the handles, regardless of the handle's position in the list.
 
 ```q
 q)htp1:hopen 4567
@@ -456,7 +458,7 @@ This can be applied to a tickerplant publishing asynchronously to multiple subsc
 
 #### .z.pg (get) / .z.ps (set)
 
-When the query reaches the server, it invokes a different message handler depending on whether the query was sent synchronously (`.z.pg` - get) or asynchronously (`.z.ps` - set). The return value from `.z.pg` is sent as the response message and the return value from `.z.ps` is ignored unless it is an error. If it is an error, the message is printed to the console of the process the query is being executed on. The error will not be visible to the querying process (the client).
+When the query reaches the server, it invokes a different message handler depending on whether the query was sent synchronously ([`.z.pg`](https://code.kx.com/q/ref/dotz/#zpg-get) - get) or asynchronously ([`.z.ps`](https://code.kx.com/q/ref/dotz/#zps-set) - set). The return value from `.z.pg` is sent as the response message and the return value from `.z.ps` is ignored unless it is an error. If it is an error, the message is printed to the console of the process the query is being executed on. The error will not be visible to the querying process (the client).
 
 By default `.z.pg` and `.z.ps` are equivalent to {value x} but are commonly edited to implement user level permissioning. The default behaviour of these, or any `.z.p`\* handlers defined in k before .q.k is loaded can be restored using '\\x'.
 
@@ -483,7 +485,7 @@ q)h`a`b`c!`d`e`f
 
 Now that the client has connected to the server and run the query, the last step is to close the handle.
 
-To close the handle inside a process, use `hclose`.
+To close the handle inside a process, use [`hclose`](https://code.kx.com/q/ref/hopen/#hclose).
 
 ```q
 q)h:hopen 4567
@@ -515,7 +517,7 @@ q)hclose 6
 
 ### .z.pc (close)
 
-Running `hclose[handle]` on the client will cause `.z.pc` to be invoked on the server. Unlike the message handlers we have seen before, it is not possible to obtain information relating to the client process in `.z.pc` because at this point that connection no longer exists. The integer identifying the handle that was just closed is sent as a parameter to `.z.pc` and can be used together with `.z.po`, to track connections to the server process.
+Running `hclose[handle]` on the client will cause [`.z.pc`](https://code.kx.com/q/ref/dotz/#zpc-close) to be invoked on the server. Unlike the message handlers we have seen before, it is not possible to obtain information relating to the client process in `.z.pc` because at this point that connection no longer exists. The integer identifying the handle that was just closed is sent as a parameter to `.z.pc` and can be used together with `.z.po`, to track connections to the server process.
 
 In addition to when a handle is closed gracefully using hclose, `.z.pc` is also invoked on the server if the client process is killed.
 
@@ -589,7 +591,7 @@ The tickerplant process is set to listen on port 5010 unless a port is specified
 if[not system"p";system"p 5010"]
 ```
 
-All messages published to a tickerplant are immediately logged to a file. This file can be used to replay all messages up to the point of failure in the event of a process crashing. A handle (`.u.l`) is opened to the desired file (`.u.L`) using `hopen`. Messages sent to this handle are appended to the file.
+All messages published to a tickerplant are immediately logged to a file. This file can be used to replay all messages up to the point of failure in the event of a process crashing. A handle (`.u.l`) is opened to the desired file (`.u.L`) using `hopen`. Messages sent to this handle are appended to the file. More information on writing to and replaying from a tplog can be found [here](https://code.kx.com/q/wp/data-recovery/#recovery).
 
 ```q
 q).u.L:`:sampleLog
@@ -639,7 +641,7 @@ Data is published synchronously from a feedhandler to the tickerplant. This is n
 
 ### Managing tickerplant subscriptions
 
-In a tickerplant, current subscriptions are maintained in `.u.w`, an in memory dictionary which stores each subscriber's handle and subscription information. When a process subscribes to the tickerplant, the process handle and any symbol filters are added to `.u.w`.
+In a tickerplant, current subscriptions are maintained in `.u.w`, an in memory dictionary which stores each subscriber's handle and subscription information. When a process subscribes to the tickerplant, the process handle and any symbol filters are added to `.u.w`. 
 
 Below is an example of `.u.w` in a tickerplant with two tables - 'trade' and 'quote'. In this example the rdb is the only subscriber and it is subscribed to all symbols for both tables
 
@@ -680,9 +682,11 @@ If on a timer tick (whatever \\t is set to, 1000ms by default) the count of the 
 
 This publishing is considered the critical path of data in a low latency tick system. As such, it is considered best practice to use async messaging so that no unnecessary delays in streaming data are caused by the process waiting for a response from a hanging or unresponsive subscriber.
 
+It is possible that a client subscribed to a tickperplant may not be processing the data it is being sent quickly enough, causing a backlog to form and the TCP buffer of the subscriber to fill. When this happens the pending messages will sit in the an output queue in the memory space of the tickperplant process itself until the slow subscriber becomes available. It is possible to view a dictionary of open handles mapped to the size of messages queued for this handle using [.z.W](https://code.kx.com/q/ref/dotz/#zw-handles). In extreme cases the tickerplant memory footprint might grow to an unmanageable level, resulting in a [wsfull error](https://code.kx.com/q/basics/errors/). More information on planning for this and other disaster scenarios can be found [here](https://code.kx.com/q/wp/disaster-recovery/).
+
 ### End of day
 
-The timer has another important function within the tickerplant - the end of day rollover. The `.z.ts` timer function takes the system's date as a parameter and passes this to `.u.ts`. Below we can see the function definitions of endofday and ts within the .u namespace.
+The timer has another important function within the tickerplant - the end of day rollover. The [`.z.ts`](https://code.kx.com/q/ref/dotz/#zts-timer) timer function takes the system's date as a parameter and passes this to `.u.ts`. Below we can see the function definitions of endofday and ts within the .u namespace.
 
 ```q
 //tick.q extract
@@ -724,9 +728,31 @@ The term socket usually refers to a TCP socket. A socket is one end point of a t
 
 A process can refer to a socket using a file descriptor or handle, an abstract indicator used to access a file or other resource.
 
+## Summary of major IPC related releases
 
-## FEEDBACK - Eoin 
-Ideas that could maybe be explored explained but possibly out of scope:
-- Describe socket buffers especially what happens when we have a slow subscriber, where messages build up and how kdb process when thread is free again.  
-- Explain edge case where scenario making a sync call kdb will processes any msgs pending on that handle before it gets sync response. 
-- should .z.W be covered
+2.4	 - 2012.03.31
+- Added [Multi-threaded input](https://code.kx.com/q/releases/ChangesIn2.4/#multi-threaded-input) using a negative port number
+- [.z.pw](https://code.kx.com/q/releases/ChangesIn2.4/#zpw) - username and password passed to .z.pw to enable option for custom validation
+
+2.5	- 2012.03.31
+- Added [.z.W](https://code.kx.com/q/releases/ChangesIn2.5/#zw) to return a dictionary of IPC handles with the total number of bytes in each output queue
+
+2.6 - 2012.08.03
+- Added [IPC compression](https://code.kx.com/q/releases/ChangesIn2.6/#ipc-compression) 
+- [.z.W](https://code.kx.com/q/releases/ChangesIn2.6/#zw) updated to return the size in bytes of each messages in the input queue
+
+2.7	- 2013.06.28
+- Added an [IPC message validator](https://code.kx.com/q/releases/ChangesIn2.7/#ipc-message-validator)
+
+[3.4](https://code.kx.com/q/releases/ChangesIn3.4/)	- 2019.06.03
+- IPC message size limit raised from 2GB to 1TB
+- Adding support for IPC via Unix domain sockets
+- Secure Sockets Layer(SSL)/Transport Layer Security(TLS)
+- Added async broadcast as -25!(handles;msg)
+
+3.5	- 2020.02.13
+- Added hopen timeout for [TLS](https://code.kx.com/q/releases/ChangesIn3.5/#ssltls)
+
+3.6	- 2020.02.24
+- [Deferred response](https://code.kx.com/q/releases/ChangesIn3.6/#deferred-response) - a server process can now use -30!x to defer responding to a sync query
+
