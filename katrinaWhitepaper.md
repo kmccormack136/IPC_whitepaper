@@ -445,13 +445,31 @@ More information on this can be found [here](https://code.kx.com/q/kb/callbacks/
 Much of the overhead of sending a message via IPC is in serialising the data before sending. It is possible to 'async broadcast' the same message to multiple handles using the internal `-25!` function. This will serialise the message once and send to all handles to reduce CPU and memory load. An error in publishing to any handle will result in the message not being sent to any of the handles, regardless of the handle's position in the list.
 
 ```q
-q)htp1:hopen 4567
-q)htp2:hopen 5678
-q)htp3:hopen 6789              
-q)tplist:(htp1;htp2;htp3)
-q)tplist
-4 5 6i
-q)-25!(tplist;"a:3")
+q)h1:hopen 5551
+q)h2:hopen 5552
+q)h3:hopen 5553
+q)
+q)h1"a:1"
+q)h3"a:1"
+q)
+q)-25!((h1;h2;h3);({c::a+1};`))
+q)h1"c"
+2
+q)h3"c"
+2
+q)// close process on 5552, try to assign 'd'
+q)-25!((h1;h2;h3);({d::a+1};`))
+'5 is not an ipc handle
+  [0]  -25!((h1;h2;h3);({d::a+1};`))
+          ^
+q)h1"d"
+'d
+  [0]  h1"d"
+       ^
+q)h3"d"
+'d
+  [0]  h3"d"
+       ^
 ```
 
 This can be applied to a tickerplant publishing asynchronously to multiple subscribers (rdbs, chained tickerplants or other processes performing realtime calculations). More examples can be found [here](https://code.kx.com/q/basics/internal/#-25x-async-broadcast).
