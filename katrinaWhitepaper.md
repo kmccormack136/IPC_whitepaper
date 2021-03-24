@@ -678,7 +678,7 @@ del:{w[x]_:w[x;;0]?y};
 .z.pc:{del[;x]each t}
 ```
 
-The function `.u.del` accepts two input parameters: x, the handle to the now closed subscriber and .u.t, a global list of all tables defined in the tickerplant. This function will remove the handle from the subscription list for each of these tables. In this example, if the single rdb subscribing to the process is killed, `.u.w` will be empty.
+The function `.u.del` accepts two input parameters: x, the handle to the now closed subscriber and `.u.t`, a global list of all tables defined in the tickerplant. This function will remove the handle from the subscription list for each of these tables. In this example, if the single rdb subscribing to the process is killed, `.u.w` will be empty.
 
 ```q
 q).u.w
@@ -688,7 +688,7 @@ trade|
 
 ### Publishing from the tickerplant to subscribers
 
-Data is published from the tickerplant by invoking .u.pub on the tickerplant periodically on a timer. .u.pub accepts two inputs, t - the table name and x - the data (value t).
+Data is published from the tickerplant by invoking `.u.pub` on the tickerplant periodically on a timer. `.u.pub` accepts two inputs, t - the table name and x - the data (value t).
 
 ```q
 //tick.q extract
