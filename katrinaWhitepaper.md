@@ -576,7 +576,7 @@ handle| ip         user    status
 736   | 2130706433 katrina OPEN
 ```
 
-If the handle is closed from the server side trackConnections is not updated by default, .z.pc must be invoked manually
+If the handle is closed from the server side trackConnections is not updated by default, .z.pc must be invoked manually.
 
 ```
 q)trackConnections
@@ -725,7 +725,7 @@ If on a timer tick (whatever \\t is set to, 1000ms by default) the count of the 
 
 This publishing is considered the critical path of data in a low latency tick system. As such, it is considered best practice to use async messaging so that no unnecessary delays in streaming data are caused by the process waiting for a response from a hanging or unresponsive subscriber.
 
-It is possible that a client subscribed to a tickperplant may not be processing the data it is being sent quickly enough, causing a backlog to form and the TCP buffer of the subscriber to fill. When this happens the pending messages will sit in the an output queue in the memory space of the tickperplant process itself until the slow subscriber becomes available. It is possible to view a dictionary of open handles mapped to the size of messages queued for this handle using [.z.W](https://code.kx.com/q/ref/dotz/#zw-handles). In extreme cases the tickerplant memory footprint might grow to an unmanageable level, resulting in a [wsfull error](https://code.kx.com/q/basics/errors/). If writing logic for the tickerplant to manually remove a slow consumer to protect the tickerplant, .z.pc must be manually invoked to perform subscription cleanup after the bad client is kicked as shown in the 'Tracking open connections' example in the previous section. More information on planning for this and other disaster scenarios can be found [here](https://code.kx.com/q/wp/disaster-recovery/).
+It is possible that a client subscribed to a tickperplant may not be processing the data it is being sent quickly enough, causing a backlog to form and the TCP buffer of the subscriber to fill. When this happens the pending messages will sit in the an output queue in the memory space of the tickperplant process itself until the slow subscriber becomes available. It is possible to view a dictionary of open handles mapped to the size of messages queued for this handle using [.z.W](https://code.kx.com/q/ref/dotz/#zw-handles). In extreme cases the tickerplant memory footprint might grow to an unmanageable level, resulting in a [wsfull error](https://code.kx.com/q/basics/errors/). If writing logic for the tickerplant to remove a slow consumer to protect the tickerplant, .z.pc must be manually invoked to perform subscription cleanup after the bad client is kicked as shown in the 'Tracking open connections' example in the previous section. More information on planning for this and other disaster scenarios can be found [here](https://code.kx.com/q/wp/disaster-recovery/).
 
 ### End of day
 
