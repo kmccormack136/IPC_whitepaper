@@ -755,7 +755,8 @@ This was a short review of how IPC is implemented in the course of processing an
 
 # Conclusion
 
-This paper has provided an in depth look at the underlying mechanisms of interprocess communication in kdb+. It begins by proving an overview of TCP connections and discusses applications for using unix domain sockets across processes on a local host and TLS/SSL for more secure communication. It goes on to describe each of the message handlers invoked in the process of opening a connection to a process, running a query and closing that connection and uses various examples to illustrate these. The second part of the paper then takes a closer look of how IPC is applied in a vanilla tickerplant application, from when the data is first received from an upstream feed process to how tables are saved down at the end of the day.
+This paper provides an in-depth look at the underlying mechanisms of interprocess communication in kdb+. It begins by providing an overview of TCP connections and discusses applications for using Unix domain sockets across processes on a local host, and the use of TLS/SSL for more secure communication. It describes the main message handlers invoked in the process of opening a connection, running a query and closing a connection to a process, with various examples to illustrate each step. 
+It then takes a closer look at how IPC is applied in a vanilla tickerplant application, from when the data is first received from an upstream feed process to how tables are saved down at the end of the day.
 
 # Appendix
 
